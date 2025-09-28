@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<title>Bouyaka P2P — Sticky Composer + Sender Thumbnail + Call Refuse</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    safelist: [
+      'text-emerald-400','text-cyan-400','text-sky-400','text-indigo-300',
+      'text-fuchsia-300','text-rose-300','text-orange-300','text-amber-300',
+      'text-lime-300','text-teal-300','bg-green-900','bg-green-600','border-green-600'
+    ]
+  }
+</script>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+
+<style>
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #000; }
+  ::-webkit-scrollbar-thumb { background-color: #4ade80; border-radius: 4px; }
+
+  body { background:#000; color:#34d399; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", "Courier New", monospace; margin:0; min-height:100vh; display:flex; flex-direction:column; }
+  .btn { display:inline-flex; align-items:center; gap:6px; border:1px solid #22c55e; padding:6px 10px; background:black; color:#34d399; border-radius:10px; cursor:pointer; font-size:0.9rem; }
+  .btn:hover { background:#134e4a; color:#000; }
+  .btn-disconnect { border-color:#dc2626; color:#fda4a4; }
+  .btn-cancel { border-color:#f59e0b; color:#fbbf24; padding:4px 10px; border-radius:8px; cursor:pointer; background:transparent; font-size:0.8rem; }
+  .btn-voice { border-color:#22c55e; }
+  .btn-fat { padding:12px 14px; border-radius:14px; font-size:1rem; }
+  .icon { width:18px; height:18px; fill:currentColor; }
+  .icon-lg { width:22px; height:22px; }
+  .label { display:inline; }
+  @media (max-width:640px){ .btn .label{display:none} }
+
+  #app { display:flex; flex-direction:column; height:100vh; }
+  header { border-bottom:1px solid #064e3b; padding:8px 12px; display:flex; align-items:center; justify-content:space-between; }
+  main { display:flex; flex:1; overflow:hidden; }
+  #left { flex:1; display:flex; flex-direction:column; min-width:0; padding:12px; }
+  #chatPanel { display:flex; flex-direction:column; flex:1; min-width:0; }
+  #chat { flex:1; overflow-y:auto; padding:12px; border:1px solid #063; border-radius:10px; background:#000; min-height:0; transition: box-shadow .15s, outline-color .15s; }
+  .drop-active { outline: 2px dashed #22c55e; outline-offset: 4px; box-shadow: 0 0 0 4px rgba(34,197,94,.15) inset; }
+
+  /* Sticky composer */
+  #composer { position: sticky; bottom: 0; background: #000; padding-top: 10px; margin-top: 8px; }
+  #composer-inner { display:flex; gap:10px; align-items:stretch; }
+  #msg { min-height: 56px; font-size: 0.95rem; }
+  .btn-fat .icon { width:22px; height:22px; }
+
+  .small { font-size:.8rem; color:#86efac; }
+  .chat-line { margin-bottom:6px; display:flex; align-items:flex-start; gap:6px; flex-wrap:wrap; }
+  .system-line { color:#fbbf24; font-weight:700; }
+  .msg-text { white-space: pre-wrap; }
+
+  .progress-bar-wrap { width:100%; background:#052e2a; border-radius:8px; height:12px; overflow:hidden; }
+  .progress-bar { height:12px; background:#16a34a; width:0%; transition: width .12s linear; }
+
+  /* ⬇️ Responsive previews fix */
+  .attach-card { border:1px solid #22c55e; border-radius:10px; padding:10px; margin-top:10px; background:#000; word-break:break-word; }
+  .media-preview { 
+    display:block; width:100%; height:auto;
+    /* Limite dynamique: prend au plus 55vh (sur mobile) ou 512px, selon le plus petit */
+    max-height: min(55vh, 512px);
+    object-fit:contain; border:1px solid #22c55e; border-radius:10px; box-shadow:0 0 12px rgba(34,197,94,.15); background:#000; margin-top:8px;
+  }
+  /* Forcer la règle même si un style inline existe sur la vidéo du player custom */
+  .custom-player video { width:100%; height:auto; max-height: min(50vh, 360px) !important; }
+
+  /* Petits écrans: encore plus compact */
+  @media (max-width:420px){
+    .media-preview { max-height: min(50vh, 380px); }
+    .custom-player video { max-height: min(45vh, 320px) !important; }
+  }
+
+  @keyframes matrix-glitch { 0%{filter:drop-shadow(0 0 6px #0f0); transform:translateY(0) skewX(0)} 25%{filter:drop-shadow(0 0 12px #0f0); transform:translateY(-2px) skewX(-1deg)} 50%{filter:drop-shadow(0 0 10px #0f0); transform:translateY(2px) skewX(1deg)} 75%{filter:drop-shadow(0 0 8px #0f0); transform:translateY(-1px) skewX(-.5deg)} 100%{filter:none; transform:none} }
+  .matrix-glitch { animation: matrix-glitch 900ms ease-in-out; }
+
+  .voice-wrap { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-right:8px; }
+  .level-bar { width:80px; height:8px; background:#052e2a; border:1px solid #22c55e; border-radius:4px; overflow:hidden; }
+  .level-fill { height:100%; width:0%; background:#22c55e; transition:width 80ms linear; }
+
+  /* Thèmes */
+  body[data-theme="noir"] { background:#0b0b0b; color:#e5e7eb; }
+  body[data-theme="noir"] header { border-color:#1f2937; }
+  body[data-theme="noir"] #chat { border-color:#374151; background:#0b0b0b; }
+  body[data-theme="noir"] .btn { border-color:#9ca3af; color:#e5e7eb; }
+  body[data-theme="noir"] .btn:hover { background:#1f2937; color:#fff; }
+  body[data-theme="noir"] .progress-bar { background:#9ca3af; }
+  body[data-theme="noir"] .progress-bar-wrap { background:#111827; }
+
+  body[data-theme="matrix"] { background: radial-gradient(#001100,#000); color:#9eff9e; }
+  body[data-theme="matrix"] header { border-color:#0a3; }
+  body[data-theme="matrix"] #chat { border-color:#0a3; background:#000; }
+  body[data-theme="matrix"] .btn { border-color:#0f0; color:#9eff9e; }
+  body[data-theme="matrix"] .btn:hover { background:#063; color:#000; }
+  body[data-theme="matrix"] .progress-bar { background:#0f0; }
+  body[data-theme="matrix"] .progress-bar-wrap { background:#022; }
+
+  .custom-player { display:flex; flex-direction:column; gap:6px; background:#000; border:1px solid #22c55e; border-radius:10px; padding:8px; box-shadow:0 0 12px rgba(34,197,94,.45); margin-top:8px; width:100%; }
+  .custom-controls { display:flex; align-items:center; gap:8px; width:100%; }
+  .custom-btn { border:1px solid #22c55e; background:black; color:#22c55e; padding:6px 8px; border-radius:8px; cursor:pointer; }
+  .custom-btn:hover { background:#22c55e; color:black; }
+  .custom-progress { appearance:none; height:6px; background:#064e3b; border-radius:4px; flex:1; }
+  .custom-progress::-webkit-slider-thumb { appearance:none; width:12px; height:12px; background:#22c55e; border-radius:50%; cursor:pointer; }
+</style>
+</head>
+<body data-theme="hacker">
+<div id="app">
+  <header>
+    <div class="flex items-center gap-2">
+      <strong>Bouyaka P2P</strong>
+      <button id="btnTheme" class="btn" title="Changer de thème">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 7 7 0 010-14 9 9 0 000-4z"/></svg>
+        <span class="label">Thème</span>
+      </button>
+    </div>
+    <div class="small flex items-center gap-2">
+      Mon ID:
+      <input id="myId" readonly class="bg-black border border-green-600 px-2 py-1 text-xs cursor-pointer"
+             style="min-width:160px" title="Clique pour copier" />
+    </div>
+  </header>
+
+  <main>
+    <div id="left">
+      <!-- Connexion -->
+      <div id="connectPanel" class="max-w-xl mx-auto w-full">
+        <div class="border border-green-900 p-4 rounded-lg">
+          <h2 class="mb-2">Connexion</h2>
+          <label class="small">Pseudo</label>
+          <input id="pseudo" value="Moi" class="w-full bg-black border border-green-600 px-3 py-2 mb-2" />
+          <label class="small">ID distant</label>
+          <div class="flex gap-2 items-center">
+            <input id="peerId" placeholder="Entrez l'ID du pair"
+                   class="flex-grow bg-black border border-green-600 px-3 py-2 text-xs" />
+            <button id="btnPaste" class="btn" title="Coller depuis presse-papiers">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M16 1H8L6 3H4v18h16V3h-2l-2-2zM12 4c.55 0 1 .45 1 1h-2c0-.55.45-1 1-1zM6 5h12v14H6V5z"/></svg>
+              <span class="label">Coller</span>
+            </button>
+          </div>
+          <div class="flex gap-2 items-center mt-3">
+            <button id="btnConnect" class="btn flex-1">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M12 2 2 7v6c0 5 3.6 9.4 10 13 6.4-3.6 10-8 10-13V7l-10-5zM11 14h2v-4h-2v4z"/></svg>
+              <span class="label">Se connecter</span>
+            </button>
+            <button id="btnToggleLogsHeader" class="btn" title="Afficher logs" style="width:120px">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zM3 9h2V7H3v2zm4 8h14v-2H7v2zm0-4h14v-2H7v2zm0-6v2h14V7H7z"/></svg>
+              <span class="label">Logs</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat (caché au départ) -->
+      <div id="chatPanel" class="h-full flex-col" style="display:none">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center gap-2">
+            <strong>Chat</strong>
+            <div id="voiceStatus" class="small">Appel: inactif</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <div id="voiceControls" class="flex items-center gap-2">
+              <div class="voice-wrap" id="voiceMeterContainer" style="display:none"></div>
+
+              <button id="btnVoice" class="btn btn-voice" title="Appel vocal">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M12 3C7.6 3 4 6.6 4 11c0 2.3 1 4.4 2.6 5.9L6 20l3.1-.6C10.6 20.6 11.3 21 12 21s1.4-.4 2-1.6L17.1 20l-.6-3.1C19 15.4 20 13.3 20 11c0-4.4-3.6-8-8-8z"/></svg>
+                <span class="label">Appel</span>
+              </button>
+
+              <button id="btnMute" class="btn hidden" title="Muet">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M16.5 12c0-1.1-.9-2-2-2H11l-4 4H4V8h3l4-4h3.5C17 4 19 6 19 8.5c0 1.7-1 3.2-2.5 4z"/></svg>
+                <span class="label">Muet</span>
+              </button>
+
+              <button id="btnHangup" class="btn btn-disconnect hidden" title="Raccrocher">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M21 15.46 16.82 14.35a1 1 0 0 0-1.11.41L13.5 18.7c-2.83-1.51-5.12-3.8-6.63-6.63l4.94-2.21a1 1 0 0 0 .41-.88L8.54 3H3v6c0 9.39 10.61 16 18 6v-.54z"/></svg>
+                <span class="label">Raccrocher</span>
+              </button>
+            </div>
+
+            <button id="btnToggleLogs" class="btn" title="Afficher logs (bas)">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zM3 9h2V7H3v2zm4 8h14v-2H7v2zm0-4h14v-2H7v2zm0-6v2h14V7H7z"/></svg>
+              <span class="label">Logs</span>
+            </button>
+
+            <button id="btnClearLogs" class="btn" title="Effacer logs">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+              <span class="label">Effacer</span>
+            </button>
+
+            <button id="btnDisconnect" class="btn btn-disconnect" title="Déconnexion">
+              <svg class="icon" viewBox="0 0 24 24"><path d="M13 3h-2v7H4v4h7v7h2v-7h7v-4h-7z"/></svg>
+              <span class="label">Déconnexion</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="logFloat" class="hidden border border-green-600 p-2 text-xs max-h-36 overflow-y-auto small mb-2"></div>
+
+        <div id="chat"></div>
+
+        <!-- Preview d’attache (reste juste au-dessus du composer) -->
+        <div id="attachPreview"></div>
+
+        <!-- Composer sticky : 📎 — textarea — envoyer (gros boutons) -->
+        <div id="composer" class="border-t border-green-900">
+          <div id="composer-inner">
+            <button id="btnAttach" class="btn btn-fat" title="Joindre un fichier">
+              <svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M16.5 6.5l-7.78 7.78a3 3 0 0 0 4.24 4.24l8.49-8.49a5 5 0 1 0-7.07-7.07l-9.9 9.9a7 7 0 1 0 9.9 9.9l7.07-7.07"/></svg>
+              <span class="label">Joindre</span>
+            </button>
+
+            <textarea id="msg" rows="2" placeholder="Enter=envoyer, Shift+Enter=nouvelle ligne"
+              class="flex-grow bg-black border border-green-600 px-3 py-2 resize-y rounded-lg"></textarea>
+
+            <button id="send" class="btn btn-fat" title="Envoyer message">
+              <svg class="icon icon-lg" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+              <span class="label">Envoyer</span>
+            </button>
+          </div>
+          <input type="file" id="fileHidden" class="hidden" />
+        </div>
+      </div>
+    </div>
+    <aside style="width:0; display:none;"></aside>
+  </main>
+
+  <footer class="px-3 py-2 border-t border-green-900">
+    <small class="small">Bouyaka P2P — HackerStyle</small>
+  </footer>
+</div>
+
+<audio id="remoteAudio" autoplay playsinline class="hidden"></audio>
+
+<script>
+/* ========= UTIL & STATE ========= */
+const $ = s => document.querySelector(s);
+
+let peer=null, conn=null, myName="Moi", peersNames={}, transfers={};
+let sendActiveId=null, recvActiveId=null;
+let currentCall=null, localStream=null, audioCtx=null, analyser=null, levelRAF=null, ringtoneInterval=null;
+let stagedFile = null;
+
+/* Pseudo colors */
+const COLOR_CLASSES = ["text-emerald-400","text-cyan-400","text-sky-400","text-indigo-300","text-fuchsia-300","text-rose-300","text-orange-300","text-amber-300","text-lime-300","text-teal-300"];
+function hashStr(s){ let h=0; for(let i=0;i<s.length;i++){ h=((h<<5)-h)+s.charCodeAt(i); h|=0; } return Math.abs(h); }
+function pseudoSpan(name){ const cls=COLOR_CLASSES[hashStr(name)%COLOR_CLASSES.length]; const sp=document.createElement("span"); sp.className="font-bold "+cls; sp.textContent="["+name+"]"; return sp; }
+
+/* Logs */
+function log(txt){ const line=new Date().toLocaleTimeString()+" | "+txt; const d=document.createElement("div"); d.textContent=line; $("#logFloat").appendChild(d); $("#logFloat").scrollTop=$("#logFloat").scrollHeight; console.log(line); }
+
+/* Views */
+function showConnectView(){
+  const cp=$("#connectPanel"), ch=$("#chatPanel");
+  if(cp){ cp.style.display="block"; cp.classList.remove("hidden"); cp.setAttribute("aria-hidden","false"); }
+  if(ch){ ch.style.display="none";  ch.classList.add("hidden");   ch.setAttribute("aria-hidden","true"); }
+}
+function showChatView(){
+  const cp=$("#connectPanel"), ch=$("#chatPanel");
+  if(cp){ cp.style.display="none";  cp.classList.add("hidden");   cp.setAttribute("aria-hidden","true"); }
+  if(ch){ ch.style.display="flex";  ch.classList.remove("hidden"); ch.setAttribute("aria-hidden","false");}
+}
+showConnectView();
+
+/* Theme */
+const themes=["hacker","noir","matrix"]; let themeIdx=0;
+const savedTheme=localStorage.getItem("bouyaka-theme");
+if(savedTheme&&themes.includes(savedTheme)){ themeIdx=themes.indexOf(savedTheme); document.body.dataset.theme=savedTheme; }
+$("#btnTheme").onclick=()=>{ themeIdx=(themeIdx+1)%themes.length; const t=themes[themeIdx]; document.body.dataset.theme=t; localStorage.setItem("bouyaka-theme",t); log("Thème: "+t); };
+
+/* PeerJS */
+function initPeer(){
+  peer=new Peer();
+  peer.on("open", id=>{ $("#myId").value=id; log("PeerJS ouvert: "+id); });
+  peer.on("connection", c=>setupConn(c));
+  peer.on("call", async call=>{ log("Appel entrant de "+call.peer); await handleIncomingCallInteractive(call); });
+  peer.on("error", e=>log("Peer error: "+(e?.type||e)));
+}
+initPeer();
+
+/* Connect */
+$("#btnConnect").onclick=()=>{
+  const id=$("#peerId").value.trim(); if(!id) return alert("Rentre l'ID distant.");
+  myName=$("#pseudo").value.trim()||"Moi";
+  const c=peer.connect(id, { reliable:true, serialization:'binary' });
+  setupConn(c);
+};
+
+function setupConn(c){
+  c.on("open", ()=>{
+    conn=c; myName=$("#pseudo").value.trim()||"Moi";
+    sendObj({type:"intro",name:myName});
+    peersNames[c.peer]=peersNames[c.peer]||c.peer;
+    showChatView();
+    flashMatrix(); log("Connecté à "+c.peer);
+  });
+  c.on("data", data=>{
+    if(data instanceof ArrayBuffer || ArrayBuffer.isView(data) || data instanceof Blob){ handleBinaryChunk(data); return; }
+    if(!data||!data.type) return;
+    switch(data.type){
+      case "intro":
+        peersNames[c.peer]=data.name||c.peer; addSystem(`Connecté à ${peersNames[c.peer]}`); break;
+      case "chat":
+        addChat(data.name||peersNames[c.peer]||c.peer, data.text); break;
+      case "file-info":
+        onFileInfoReceived(data, c.peer); break;
+      case "cancel-transfer":
+        onCancelReceived(data.transferId); break;
+      case "call-refused":
+        addSystem(`❌ Appel refusé par ${data.by || peersNames[c.peer] || c.peer}`); endCall("Refus distant"); break;
+      default: break;
+    }
+  });
+  c.on("close", ()=>{ log("Connexion fermée: "+c.peer); showConnectView(); recvActiveId=null; });
+}
+function sendObj(o){ if(!conn||conn.open===false){ alert("Pas connecté."); return; } try{ conn.send(o); }catch(e){ log("Erreur envoi: "+e); } }
+
+/* Chat */
+$("#send").onclick=sendMessage;
+$("#msg").addEventListener("keydown", e=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); sendMessage(); }});
+function sendMessage(){
+  const v=$("#msg").value, text=v.replace(/^\s+|\s+$/g,"");
+  if(!text) return;
+  sendObj({type:"chat",text, name:myName});
+  addChat(myName, text); $("#msg").value="";
+}
+function addChat(name,text){
+  const line=document.createElement("div"); line.className="chat-line";
+  line.appendChild(pseudoSpan(name));
+  const span=document.createElement("span"); span.className="msg-text"; span.textContent=" "+text;
+  line.appendChild(span); $("#chat").appendChild(line); $("#chat").scrollTop=$("#chat").scrollHeight;
+}
+function addSystem(text){
+  const line=document.createElement("div"); line.className="chat-line";
+  const s=document.createElement("span"); s.className="system-line"; s.textContent="[System] ";
+  line.appendChild(s); line.appendChild(document.createTextNode(text));
+  $("#chat").appendChild(line); $("#chat").scrollTop=$("#chat").scrollHeight;
+}
+
+/* Copy/Paste Mon ID */
+$("#myId").addEventListener("click", async ()=>{ const val=$("#myId").value; if(!val) return; try{ await navigator.clipboard.writeText(val); addSystem("ID copié ✔️"); }catch(e){ log("Erreur copie: "+e); }});
+$("#btnPaste").onclick=async()=>{ try{ const txt=await navigator.clipboard.readText(); if(txt){ $("#peerId").value=txt.trim(); log("ID collé: "+txt); } }catch(e){ log("Erreur coller: "+e); alert("Permission presse-papiers refusée."); } };
+
+/* ======== ATTACH: paperclip + drag&drop + preview ======== */
+const fileHidden=$("#fileHidden"), attachPreview=$("#attachPreview"), btnAttach=$("#btnAttach");
+btnAttach.onclick=()=>fileHidden.click();
+fileHidden.addEventListener("change", ()=>{ const f=fileHidden.files[0]; if(f) stageFile(f); fileHidden.value=""; });
+
+["dragenter","dragover"].forEach(ev=>$("#chat").addEventListener(ev, e=>{
+  e.preventDefault(); e.stopPropagation(); $("#chat").classList.add("drop-active");
+}));
+["dragleave","drop"].forEach(ev=>$("#chat").addEventListener(ev, e=>{
+  e.preventDefault(); e.stopPropagation();
+  if(ev==="dragleave" && e.target!==$("#chat")) return;
+  $("#chat").classList.remove("drop-active");
+}));
+$("#chat").addEventListener("drop", e=>{
+  const files = e.dataTransfer?.files; if(!files || !files.length) return;
+  stageFile(files[0]);
+});
+
+function stageFile(f){ stagedFile=f; renderAttachPreview(f); }
+function renderAttachPreview(f){
+  attachPreview.innerHTML="";
+  const card=document.createElement("div"); card.className="attach-card";
+  const title=document.createElement("div"); title.className="mb-2"; title.textContent=`📎 ${f.name} — ${(f.size/1024/1024).toFixed(2)} MB`; card.appendChild(title);
+  const url=URL.createObjectURL(f);
+
+  if(f.type.startsWith("image/")){
+    const img=document.createElement("img"); img.src=url; img.className="media-preview"; img.loading="lazy"; card.appendChild(img);
+  }
+  else if(f.type.startsWith("video/")){
+    const vid=document.createElement("video"); vid.src=url; vid.controls=true; vid.className="media-preview";
+    vid.playsInline = true; vid.setAttribute("playsinline","true"); vid.preload="metadata"; /* ✅ iOS mobile */
+    card.appendChild(vid);
+  }
+  else if(f.type.startsWith("audio/")){
+    const aud=document.createElement("audio"); aud.src=url; aud.controls=true; aud.className="media-preview";
+    card.appendChild(aud);
+  }
+  else {
+    const info=document.createElement("div"); info.className="small"; info.textContent="Aperçu non disponible"; card.appendChild(info);
+  }
+
+  const actions=document.createElement("div"); actions.className="mt-2 flex gap-2";
+  const sendBtn=document.createElement("button"); sendBtn.className="btn"; sendBtn.innerHTML=`<svg class="icon" viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm7-18L5.33 9h3.17v6h4v-6h3.17L12 2z"/></svg><span class="label">Envoyer</span>`;
+  const cancelBtn=document.createElement("button"); cancelBtn.className="btn btn-cancel"; cancelBtn.innerHTML=`<span class="label">Annuler</span>`;
+  actions.appendChild(sendBtn); actions.appendChild(cancelBtn); card.appendChild(actions);
+  attachPreview.appendChild(card);
+
+  sendBtn.onclick=()=>{ if(stagedFile) { sendFile(stagedFile); stagedFile=null; attachPreview.innerHTML=""; } };
+  cancelBtn.onclick=()=>{ stagedFile=null; attachPreview.innerHTML=""; };
+}
+
+/* ======== FILE TRANSFER (binaire direct) ======== */
+function newTransferId(){ return Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8); }
+
+function sendFile(f){
+  if(!conn||conn.open===false) return alert("Pas connecté.");
+  if(sendActiveId){ alert("Un envoi est déjà en cours."); return; }
+
+  const id=newTransferId(); sendActiveId=id;
+  transfers[id]={ id, role:"send", name:f.name, size:f.size, mime:f.type||"application/octet-stream", offset:0, canceled:false, start:Date.now(), file:f };
+
+  const ui=makeTransferRow($("#pseudo").value||myName, `envoi ${f.name}`, ()=>{
+    transfers[id].canceled=true; try{ sendObj({type:"cancel-transfer", transferId:id}); }catch{} log("Annulation envoyée pour "+f.name);
+  });
+  transfers[id].ui=ui;
+
+  // annonce
+  sendObj({ type:"file-info", transferId:id, name:f.name, size:f.size, mime:f.type||"application/octet-stream", sender: $("#pseudo").value||myName });
+
+  const CHUNK=256*1024; let offset=0; const start=Date.now();
+  (async function pump(){
+    while(offset<f.size && !transfers[id].canceled){
+      const buf=await f.slice(offset, offset+CHUNK).arrayBuffer();
+      try{ conn.send(buf); }catch(e){ log("Erreur envoi chunk: "+e); break; }
+      offset+=buf.byteLength; transfers[id].offset=offset;
+
+      const pct=(offset/f.size*100).toFixed(1), elapsed=(Date.now()-start)/1000, spd=(offset/1024/1024/Math.max(elapsed,0.001)).toFixed(2);
+      ui.bar.style.width=pct+"%"; ui.info.textContent=`${pct}% | ${spd} MB/s | ETA: ${Math.max(((f.size-offset)/1024/1024/Math.max(+spd,0.0001)).toFixed(1),0)}s`;
+
+      while(conn.peerConnection?.sctp?.bufferedAmount > 4*1024*1024){ await new Promise(r=>setTimeout(r,8)); if(transfers[id].canceled) break; }
+      await Promise.resolve();
+    }
+    if(transfers[id].canceled){
+      ui.info.textContent="Annulé"; log("Envoi annulé: "+f.name);
+    } else {
+      ui.info.textContent+=" • OK"; log("Fichier envoyé: "+f.name);
+      previewSentFile(f); /* ✅ miniature côté envoyeur */
+    }
+    sendActiveId=null;
+  })();
+}
+
+function makeTransferRow(who, text, onCancel){
+  const chat=$("#chat");
+  const wrap=document.createElement("div"); wrap.className="mb-2 w-full";
+  const header=document.createElement("div"); header.className="flex items-center gap-2";
+  header.appendChild(pseudoSpan(who));
+  const desc=document.createElement("span"); desc.textContent=" "+text; header.appendChild(desc);
+  const cancelBtn=document.createElement("button"); cancelBtn.className="btn-cancel ml-auto"; cancelBtn.textContent="Annuler";
+  cancelBtn.onclick=()=>{ cancelBtn.disabled=true; onCancel?.(); };
+  header.appendChild(cancelBtn); wrap.appendChild(header);
+
+  const barWrap=document.createElement("div"); barWrap.className="progress-bar-wrap mt-1";
+  const bar=document.createElement("div"); bar.className="progress-bar"; barWrap.appendChild(bar); wrap.appendChild(barWrap);
+
+  const info=document.createElement("div"); info.className="small mt-1"; wrap.appendChild(info);
+
+  chat.appendChild(wrap); chat.scrollTop=chat.scrollHeight;
+  return { wrap, bar, info, cancelBtn };
+}
+
+/* Réception */
+function onFileInfoReceived(msg, peerId){
+  const id=msg.transferId;
+  if(recvActiveId && recvActiveId!==id){ try{ sendObj({type:"cancel-transfer", transferId:recvActiveId}); }catch{} delete transfers[recvActiveId]; }
+  recvActiveId = id;
+  transfers[id]={ id, role:"recv", name:msg.name, size:msg.size, mime:msg.mime, bufs:[], received:0, start:Date.now(), canceled:false, peerId, sender: msg.sender||peersNames[peerId]||peerId };
+  const ui=makeTransferRow(transfers[id].sender, `vous envoie ${msg.name}`, ()=>{
+    transfers[id].canceled=true; try{ sendObj({type:"cancel-transfer", transferId:id}); }catch{} log("Téléchargement annulé: "+msg.name);
+  });
+  transfers[id].ui=ui;
+}
+
+function handleBinaryChunk(data){
+  const id=recvActiveId; if(!id) { log("Chunk reçu sans file-info"); return; }
+  const t=transfers[id]; if(!t || t.canceled) return;
+
+  let u8;
+  if(data instanceof ArrayBuffer) u8=new Uint8Array(data);
+  else if(ArrayBuffer.isView(data)) u8=new Uint8Array(data.buffer);
+  else {
+    const reader = new FileReader();
+    reader.onload = () => handleBinaryChunk(reader.result);
+    reader.readAsArrayBuffer(data);
+    return;
+  }
+
+  t.bufs.push(u8); t.received += u8.byteLength;
+
+  const pct=(t.received/t.size*100).toFixed(1), elapsed=(Date.now()-t.start)/1000, spd=(t.received/1024/1024/Math.max(elapsed,0.001)).toFixed(2);
+  if(t.ui){ t.ui.bar.style.width=pct+"%"; t.ui.info.textContent=`${pct}% | ${spd} MB/s | ETA: ${Math.max(((t.size-t.received)/1024/1024/Math.max(+spd,0.0001)).toFixed(1),0)}s`; }
+
+  if(t.received>=t.size){
+    const blob=new Blob(t.bufs,{type:t.mime});
+    previewReceivedFile(blob, t);
+    if(t.ui) t.ui.info.textContent+=" • OK";
+    log("Fichier reçu: "+t.name);
+    recvActiveId=null;
+  }
+}
+
+function onCancelReceived(transferId){
+  const t=transfers[transferId]; if(!t) return;
+  t.canceled=true; if(t.ui){ t.ui.info.textContent="Annulé par le pair"; t.ui.cancelBtn.disabled=true; }
+  if(recvActiveId===transferId) recvActiveId=null;
+}
+
+/* Preview — côté receveur */
+function previewReceivedFile(blob, meta){
+  const url=URL.createObjectURL(blob); const chat=$("#chat");
+  const label=document.createElement("div"); label.className="chat-line";
+  label.appendChild(pseudoSpan(meta.sender||peersNames[meta.peerId]||meta.peerId));
+  label.appendChild(document.createTextNode(" a envoyé "+meta.name)); chat.appendChild(label);
+
+  appendMediaPreview(url, meta.mime, meta.name, chat);
+}
+
+/* Preview — côté envoyeur */
+function previewSentFile(file){
+  const url=URL.createObjectURL(file); const chat=$("#chat");
+  const label=document.createElement("div"); label.className="chat-line";
+  label.appendChild(pseudoSpan($("#pseudo").value||myName));
+  label.appendChild(document.createTextNode(" a envoyé "+file.name)); chat.appendChild(label);
+
+  appendMediaPreview(url, file.type || "application/octet-stream", file.name, chat);
+}
+
+/* Utilitaire preview */
+function appendMediaPreview(url, mime, name, container){
+  if(mime.startsWith("image/")){
+    const img=document.createElement("img"); img.src=url; img.className="media-preview"; img.loading="lazy"; container.appendChild(img);
+  } else if(mime.startsWith("video/")){
+    const vid=document.createElement("video"); vid.src=url; vid.className="media-preview"; vid.playsInline=true; vid.setAttribute("playsinline","true"); vid.preload="metadata"; vid.controls=true;
+    const player=makeCustomPlayer(vid); container.appendChild(player);
+  } else if(mime.startsWith("audio/")){
+    const aud=document.createElement("audio"); aud.src=url; aud.className="media-preview";
+    const player=makeCustomPlayer(aud); container.appendChild(player);
+  } else {
+    const info=document.createElement("div"); info.className="small mt-2"; info.textContent="Fichier: "+name; container.appendChild(info);
+  }
+  const a=document.createElement("a"); a.href=url; a.download=name; a.textContent="📥 Télécharger "+name; a.className="small mt-2 block";
+  container.appendChild(a);
+  container.scrollTop=container.scrollHeight;
+}
+
+/* Player custom */
+function formatTime(sec){ if(!isFinite(sec)||isNaN(sec)) return "00:00"; const m=Math.floor(sec/60), s=Math.floor(sec%60); return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`; }
+function makeCustomPlayer(mediaEl){
+  mediaEl.controls=false; mediaEl.preload="metadata";
+  const wrap=document.createElement("div"); wrap.className="custom-player";
+  if(mediaEl.tagName.toLowerCase()==="video"){ mediaEl.style.maxHeight="360px"; } else { mediaEl.style.display="none"; }
+  wrap.appendChild(mediaEl);
+
+  const ctr=document.createElement("div"); ctr.className="custom-controls";
+  const play=document.createElement("button"); play.className="custom-btn"; play.textContent="▶️"; ctr.appendChild(play);
+  const timer=document.createElement("div"); timer.className="small font-mono"; timer.textContent="00:00 / 00:00"; timer.style.minWidth="90px"; ctr.appendChild(timer);
+  const prog=document.createElement("input"); prog.type="range"; prog.min=0; prog.max=100; prog.value=0; prog.className="custom-progress"; ctr.appendChild(prog);
+  const muteBtn=document.createElement("button"); muteBtn.className="custom-btn"; muteBtn.textContent="🔊"; ctr.appendChild(muteBtn);
+  const vol=document.createElement("input"); vol.type="range"; vol.min=0; vol.max=1; vol.step=0.05; vol.value=mediaEl.volume||1; vol.className="custom-progress"; vol.style.maxWidth="120px"; ctr.appendChild(vol);
+  wrap.appendChild(ctr);
+
+  play.onclick=()=>{ if(mediaEl.paused){ mediaEl.play().catch(()=>{}); play.textContent="⏸️"; } else { mediaEl.pause(); play.textContent="▶️"; } };
+  mediaEl.addEventListener("loadedmetadata",()=>{ timer.textContent=`00:00 / ${formatTime(mediaEl.duration)}`; if(mediaEl.tagName.toLowerCase()!=="audio") mediaEl.style.display="block"; });
+  mediaEl.addEventListener("timeupdate",()=>{ const cur=mediaEl.currentTime||0, dur=mediaEl.duration||0; timer.textContent=`${formatTime(cur)} / ${formatTime(dur)}`; prog.value = dur ? (cur/dur*100) : 0; });
+  prog.oninput=()=>{ if(mediaEl.duration) mediaEl.currentTime=(prog.value/100)*mediaEl.duration; };
+  vol.oninput=()=>{ mediaEl.volume=parseFloat(vol.value); muteBtn.textContent=(mediaEl.volume===0||mediaEl.muted)?"🔇":"🔊"; };
+  muteBtn.onclick=()=>{ if(mediaEl.muted||mediaEl.volume===0){ mediaEl.muted=false; if(mediaEl.volume===0) mediaEl.volume=0.5; vol.value=mediaEl.volume; muteBtn.textContent="🔊"; } else { mediaEl.muted=true; vol.value=0; muteBtn.textContent="🔇"; } };
+  mediaEl.addEventListener("ended",()=>{ play.textContent="▶️"; });
+  return wrap;
+}
+
+/* ======== Voice Call ======== */
+const voiceStatus=$("#voiceStatus"), btnVoice=$("#btnVoice"), btnMute=$("#btnMute"), btnHangup=$("#btnHangup"), remoteAudio=$("#remoteAudio"), voiceMeterContainer=$("#voiceMeterContainer");
+
+btnVoice.onclick=async()=>{
+  if(currentCall){ endCall("Raccroché localement"); return; }
+  if(!conn||conn.open===false) return alert("Connecte-toi d'abord.");
+  try{
+    await ensureLocalMic(); const call=peer.call(conn.peer, localStream);
+    attachCallHandlers(call);
+    voiceStatus.textContent="Appel: en cours (sortant)";
+    btnHangup.classList.remove("hidden"); btnMute.classList.remove("hidden"); btnVoice.textContent="🔴 Terminer";
+    log("Appel sortant vers "+conn.peer);
+  }catch(e){ log("Erreur appel: "+e); alert("Impossible de démarrer l'appel (micro ?)"); }
+};
+btnMute.onclick=()=>{ if(!localStream)return; const t=localStream.getAudioTracks()[0]; if(!t)return; t.enabled=!t.enabled; btnMute.textContent=t.enabled?"🔇 Muet":"🔊 Son"; };
+btnHangup.onclick=()=>{ endCall("Raccroché"); };
+
+async function handleIncomingCallInteractive(call){
+  playRingtoneLoop();
+  const caller=peersNames[call.peer]||call.peer;
+  const line=document.createElement("div"); line.className="chat-line";
+  const sys=document.createElement("span"); sys.className="system-line"; sys.textContent="[System]"; line.appendChild(sys);
+  const msg=document.createElement("span"); msg.textContent=` 📞 Appel entrant de ${caller}`; line.appendChild(msg);
+  const acceptBtn=document.createElement("button"); acceptBtn.className="btn ml-2"; acceptBtn.textContent="✅ Accepter";
+  const rejectBtn=document.createElement("button"); rejectBtn.className="btn ml-2 btn-disconnect"; rejectBtn.textContent="❌ Refuser";
+  line.appendChild(acceptBtn); line.appendChild(rejectBtn);
+  $("#chat").appendChild(line); $("#chat").scrollTop=$("#chat").scrollHeight;
+
+  acceptBtn.onclick=async()=>{
+    stopRingtone(); acceptBtn.disabled=true; rejectBtn.disabled=true;
+    await ensureLocalMic();
+    try{
+      call.answer(localStream); attachCallHandlers(call);
+      voiceStatus.textContent="Appel: en cours (entrant)";
+      btnHangup.classList.remove("hidden"); btnMute.classList.remove("hidden"); btnVoice.textContent="🔴 Terminer";
+      if(typeof remoteAudio.setSinkId==="function"){ try{ await remoteAudio.setSinkId("default"); }catch{} }
+    }catch(e){ log("Erreur accept appel: "+e); }
+    acceptBtn.remove(); rejectBtn.remove();
+  };
+  rejectBtn.onclick=()=>{ 
+    stopRingtone(); 
+    try{ call.close(); }catch{} 
+    try{ sendObj({ type:"call-refused", by: myName }); }catch{}
+    log("Appel refusé de "+caller); 
+    addSystem(`❌ Appel refusé de ${caller}`); 
+    acceptBtn.remove(); rejectBtn.remove(); 
+  };
+}
+function attachCallHandlers(call){
+  if(currentCall) try{ currentCall.close(); }catch{} 
+  currentCall=call;
+  call.on("stream", stream=>{ remoteAudio.srcObject=stream; remoteAudio.play().catch(()=>{}); });
+  call.on("close", ()=>endCall("Appel terminé"));
+  call.on("error", e=>{ log("Erreur appel: "+e); endCall("Erreur appel"); });
+}
+function endCall(reason){
+  try{ if(currentCall) currentCall.close(); }catch{} 
+  currentCall=null;
+  if(remoteAudio.srcObject){ try{ remoteAudio.srcObject.getTracks().forEach(t=>t.stop()); }catch{} remoteAudio.srcObject=null; }
+  stopLevelMeter(); stopRingtone(); voiceStatus.textContent="Appel: inactif";
+  btnHangup.classList.add("hidden"); btnMute.classList.add("hidden"); btnVoice.textContent="🎙️ Appel vocal"; 
+  log(reason);
+}
+async function ensureLocalMic(){ if(localStream) return localStream;
+  localStream=await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true }, video:false });
+  startLevelMeter(localStream); return localStream;
+}
+function startLevelMeter(stream){
+  try{
+    audioCtx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
+    const src=audioCtx.createMediaStreamSource(stream); analyser=audioCtx.createAnalyser(); analyser.fftSize=256; src.connect(analyser);
+    const data=new Uint8Array(analyser.frequencyBinCount);
+    let meter=document.querySelector("#voiceMeter");
+    if(!meter){ voiceMeterContainer.style.display="flex";
+      meter=document.createElement("div"); meter.id="voiceMeter"; meter.className="voice-wrap";
+      const label=document.createElement("span"); label.className="small"; label.textContent="Niveau micro:";
+      const bar=document.createElement("div"); bar.className="level-bar";
+      const fill=document.createElement("div"); fill.className="level-fill"; fill.id="voiceLevel";
+      bar.appendChild(fill); meter.appendChild(label); meter.appendChild(bar); voiceMeterContainer.appendChild(meter);
+    }
+    function tick(){ analyser.getByteTimeDomainData(data); let peak=0; for(let i=0;i<data.length;i++){ const v=(data[i]-128)/128; const m=Math.abs(v); if(m>peak) peak=m; }
+      const pct=Math.min(100,Math.floor(peak*140)); const fill=document.querySelector("#voiceLevel"); if(fill) fill.style.width=pct+"%"; levelRAF=requestAnimationFrame(tick); }
+    if(levelRAF) cancelAnimationFrame(levelRAF); levelRAF=requestAnimationFrame(tick);
+  }catch(e){ log("Level meter error: "+e); }
+}
+
+function stopLevelMeter(){ if(levelRAF) cancelAnimationFrame(levelRAF), levelRAF=null; const m=document.querySelector("#voiceMeter"); if(m) m.remove(); voiceMeterContainer.style.display="none"; if(audioCtx){ try{ audioCtx.close(); }catch{} audioCtx=null; } if(localStream){ try{ localStream.getTracks().forEach(t=>t.stop()); }catch{} localStream=null; } }
+function playRingtone(){ try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const osc=ctx.createOscillator(); const gain=ctx.createGain(); osc.type="square"; osc.frequency.value=440; gain.gain.value=0.08; osc.connect(gain); gain.connect(ctx.destination); osc.start(); setTimeout(()=>{osc.stop(); ctx.close();},700); }catch(e){ log("Ringtone err: "+e); } }
+function playRingtoneLoop(){ stopRingtone(); playRingtone(); ringtoneInterval=setInterval(()=>playRingtone(),2000); }
+function stopRingtone(){ if(ringtoneInterval){ clearInterval(ringtoneInterval); ringtoneInterval=null; } }
+
+/* UI: logs & disconnect */
+document.querySelectorAll("#btnToggleLogs, #btnToggleLogsHeader").forEach(el=>el.addEventListener("click",()=>$("#logFloat").classList.toggle("hidden")));
+$("#btnClearLogs").onclick=()=>{ $("#logFloat").innerHTML=""; log("Logs effacés"); };
+$("#btnDisconnect").onclick=()=>{ try{ if(currentCall) currentCall.close(); }catch{} stopLevelMeter(); stopRingtone(); try{ if(conn) conn.close(); }catch{} try{ if(peer) peer.destroy(); }catch{} initPeer(); showConnectView(); log("Déconnecté et peer réinitialisé."); };
+
+/* Matrix flash */
+function flashMatrix(){ const c=$("#chat"); c.classList.add("matrix-glitch"); setTimeout(()=>c.classList.remove("matrix-glitch"),900); }
+
+/* Unload */
+window.addEventListener("beforeunload", ()=>{ try{ if(currentCall) currentCall.close(); }catch{} stopLevelMeter(); stopRingtone(); try{ if(conn) conn.close(); }catch{} try{ if(peer) peer.destroy(); }catch{} });
+</script>
+</body>
+</html>
