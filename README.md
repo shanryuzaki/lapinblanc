@@ -1,3 +1,6 @@
+![Logo](./lapinblanc-logo.png)
+
+
 # lapinblanc
 Chat P2P - Peerjs client 
 🇫🇷 Français
