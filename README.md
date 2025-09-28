@@ -1,4 +1,4 @@
-![Logo](./lapinblanc_logo.png)
+![Logo](./lapinblanc.png)
 
 
 # lapinblanc
