@@ -265,9 +265,9 @@ showConnectView();
 
 /* Theme */
 const themes=["hacker","noir","matrix"]; let themeIdx=0;
-const savedTheme=localStorage.getItem("Lapin Blanc-theme");
+const savedTheme=localStorage.getItem("bouyaka-theme");
 if(savedTheme&&themes.includes(savedTheme)){ themeIdx=themes.indexOf(savedTheme); document.body.dataset.theme=savedTheme; }
-$("#btnTheme").onclick=()=>{ themeIdx=(themeIdx+1)%themes.length; const t=themes[themeIdx]; document.body.dataset.theme=t; localStorage.setItem("Lapin Blanc-theme",t); log("Thème: "+t); };
+$("#btnTheme").onclick=()=>{ themeIdx=(themeIdx+1)%themes.length; const t=themes[themeIdx]; document.body.dataset.theme=t; localStorage.setItem("bouyaka-theme",t); log("Thème: "+t); };
 
 /* PeerJS */
 function initPeer(){
@@ -667,6 +667,4 @@ window.addEventListener("beforeunload", ()=>{ try{ if(currentCall) currentCall.c
 </script>
 </body>
 </html>
-
-
 
