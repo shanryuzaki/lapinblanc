@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./lapinblanc.pngg" alt="logo" width="400"/>
+  <img src="./lapinblanc.png" alt="logo" width="400"/>
 </p>
 
 
