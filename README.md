@@ -1,4 +1,6 @@
-![Logo](./lapinblanc.png)
+<p align="center">
+  <img src="./lapinblanc.pngg" alt="logo" width="400"/>
+</p>
 
 
 # lapinblanc
